@@ -330,6 +330,31 @@ def create_course():
 
     return new_course, 201
 
+@app.route('/' + COURSES, methods=['GET'])
+def get_courses():
+    offset = request.args.get('offset')
+    limit = request.args.get('limit')
+    if (not offset and not limit):
+        offset = 0
+        limit = 3
+    else:
+        offset = int(offset)
+        limit = int(limit)
+
+    query = client.query(kind=COURSES)
+    query.order = ['subject']
+    query_iter = query.fetch(limit=limit, offset=offset)
+    pages = query_iter.pages
+    results = list(next(pages))
+    for r in results:
+        r['id'] = r.key.id
+        r['self'] = f'{request.url_root}{COURSES}/{r.key.id}'
+
+    return {
+        'courses': results,
+        'next': f'{request.url_root}{COURSES}?limit={limit}&offset={offset+3}'
+    }
+
 @app.errorhandler(AuthError)
 def handle_auth_error(ex):
     
