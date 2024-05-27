@@ -355,6 +355,19 @@ def get_courses():
         'next': f'{request.url_root}{COURSES}?limit={limit}&offset={offset+3}'
     }
 
+@app.route('/' + COURSES + '/<int:course_id>')
+def get_course(course_id):
+    
+    course_key = client.key(COURSES, course_id)
+    course = client.get(key=course_key)
+
+    if not course:
+        return {'Error': 'Not found'}, 404
+
+    course['id'] = course.key.id
+    course['self'] = f'{request.url_root}{COURSES}/{course.key.id}'
+    return course
+
 @app.errorhandler(AuthError)
 def handle_auth_error(ex):
     
