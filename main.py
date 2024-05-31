@@ -1,5 +1,7 @@
 from flask import Flask, request, jsonify, send_file
 from google.cloud import datastore, storage
+from google.cloud.datastore import query
+from google.cloud.datastore.query import PropertyFilter
 
 import requests
 import json
@@ -191,7 +193,104 @@ def get_user(user_id):
     if not user or payload['sub'] != user['sub']:
         return {'Error': 'You don\'t have permission on this resource'}, 403
     user['id'] = user.key.id
+
+    if user['role'] == 'instructor':
+        query = client.query(kind=COURSES)
+        query.add_filter('instructor_id', '=', user['id'])
+        courses = list(query.fetch())
+        user['courses'] = []
+        for c in courses:
+            user['courses'].append(f'{request.url_root}{COURSES}/{c.key.id}')
+
+    if user.get('avatar_file_name'):
+        del user['avatar_file_name']
+
     return user
+
+@app.route('/' + COURSES + '/<int:course_id>/students', methods=["PATCH"])
+def update_enrollment(course_id):
+    content = request.get_json()
+    payload = verify_jwt(request, False)
+    user_query = client.query(kind=USERS)
+    if payload:
+        user_query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
+        user_filter = query.Or([
+            query.PropertyFilter('role', '=', 'admin'),
+            query.PropertyFilter('role', '=', 'instructor')
+        ])
+        user_query.add_filter(filter=user_filter)
+    else:
+        return {'Error': 'Unauthorized'}, 401
+    
+    user = list(user_query.fetch())
+    course_key = client.key(COURSES, course_id)
+    course = client.get(key=course_key)
+
+    if not user or (user[0].get('role') == 'instructor' and user[0].key.id != course['instructor_id']):
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+
+    if not course:
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+    
+    if not course.get('enrollment'):
+        course['enrollment'] = []
+    
+    for s in content['add']:
+        if s in content['remove']:
+            return {'Error': 'Enrollment data is invalid'}, 409
+        #### optimize this ####
+        student_key = client.key(USERS, s)
+        student = client.get(key=student_key)
+        if not student:
+            return {'Error': 'Enrollment data is invalid'}, 409
+        if s in course['enrollment']:
+            continue
+        course['enrollment'].append(s)
+
+    for s in content['remove']:
+        #### optimize this ####
+        student_key = client.key(USERS, s)
+        student = client.get(key=student_key)
+        if not student:
+            return {'Error': 'Enrollment data is invalid'}, 409
+        if s not in course['enrollment']:
+            continue
+        course['enrollment'].remove(s)
+
+    course.update({
+        'enrollment': course['enrollment']
+    })
+
+    client.put(course)
+
+    return '', 200
+
+@app.route('/' + COURSES + '/<int:course_id>/students')
+def get_enrollment(course_id):
+    payload = verify_jwt(request, False)
+    user_query = client.query(kind=USERS)
+    if payload:
+        user_query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
+        user_filter = query.Or([
+            query.PropertyFilter('role', '=', 'admin'),
+            query.PropertyFilter('role', '=', 'instructor')
+        ])
+        user_query.add_filter(filter=user_filter)
+    else:
+        return {'Error': 'Unauthorized'}, 401
+    
+    user = list(user_query.fetch())
+    course_key = client.key(COURSES, course_id)
+    course = client.get(key=course_key)
+
+    if not user or (user[0].get('role') == 'instructor' and user[0].key.id != course['instructor_id']):
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+
+    if not course:
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+    
+
+    return course['enrollment'], 200
 
 @app.route('/' + USERS + '/<int:user_id>/avatar', methods=['POST'])
 def ceate_avatar(user_id):
@@ -367,6 +466,74 @@ def get_course(course_id):
     course['id'] = course.key.id
     course['self'] = f'{request.url_root}{COURSES}/{course.key.id}'
     return course
+
+@app.route('/' + COURSES + '/<int:course_id>', methods=['PATCH'])
+def update_course(course_id):
+    payload = verify_jwt(request, False)
+    #jwt belongs to an admin
+    query = client.query(kind=USERS)
+    if payload:
+        query.add_filter('sub', '=', payload['sub'])
+        query.add_filter('role', '=', 'admin')
+    else:
+        return {'Error': 'Unauthorized'}, 401
+    
+    admin = list(query.fetch())
+    if not admin:
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+    
+    content = request.get_json()
+    if content.get('instructor_id'):
+        instructor_key = client.key(USERS, content['instructor_id'])
+        instructor = client.get(key=instructor_key)
+        
+        if not instructor or instructor['role'] != 'instructor':
+            return {"Error": "The request body is invalid"}, 400
+    
+    course_key = client.key(COURSES, course_id)
+    course = client.get(key=course_key)
+
+    if not course:
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+    
+    course.update({
+        'instructor_id': content['instructor_id'] if content.get('instructor_id') else course['instructor_id'],
+        'subject': content['subject'] if content.get('subject') else course['subject'],
+        'number': content['number'] if content.get('number') else course['number'],
+        'title': content['title'] if content.get('title') else course['title'],
+        'term': content['term'] if content.get('term') else course['term'],
+    })
+
+    client.put(course)
+
+    course['id'] = course.key.id
+    course['self'] = f'{request.url_root}{COURSES}/{course.key.id}'
+
+    return course, 200
+
+@app.route('/' + COURSES + '/<int:course_id>', methods=['DELETE'])
+def delete_course(course_id):
+    payload = verify_jwt(request, False)
+    #jwt belongs to an admin
+    query = client.query(kind=USERS)
+    if payload:
+        query.add_filter('sub', '=', payload['sub'])
+        query.add_filter('role', '=', 'admin')
+    else:
+        return {'Error': 'Unauthorized'}, 401
+    
+    admin = list(query.fetch())
+    if not admin:
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+    
+    course_key = client.key(COURSES, course_id)
+    course = client.get(key=course_key)
+
+    if not course:
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+    
+    client.delete(course_key)
+    return '', 204
 
 @app.errorhandler(AuthError)
 def handle_auth_error(ex):
