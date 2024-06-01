@@ -169,8 +169,8 @@ def get_all_users():
     payload = verify_jwt(request, False)
     query = client.query(kind=USERS)
     if payload:
-        query.add_filter('sub', '=', payload['sub'])
-        query.add_filter('role', '=', 'admin')
+        query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
+        query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
     else:
         return {'Error': 'Unauthorized'}, 401
     
@@ -196,11 +196,18 @@ def get_user(user_id):
 
     if user['role'] == 'instructor':
         query = client.query(kind=COURSES)
-        query.add_filter('instructor_id', '=', user['id'])
+        query.add_filter(filter=PropertyFilter('instructor_id', '=', user['id']))
         courses = list(query.fetch())
         user['courses'] = []
         for c in courses:
             user['courses'].append(f'{request.url_root}{COURSES}/{c.key.id}')
+    elif user['role'] == 'student':
+        query = client.query(kind=COURSES)
+        courses = list(query.fetch())
+        user['courses'] = []
+        for c in courses:
+            if c.get('enrollment') and (user.key.id in c['enrollment']):
+                user['courses'].append(f'{request.url_root}{COURSES}/{c.key.id}')
 
     if user.get('avatar_file_name'):
         del user['avatar_file_name']
@@ -289,7 +296,6 @@ def get_enrollment(course_id):
     if not course:
         return {'Error': 'You don\'t have permission on this resource'}, 403
     
-
     return course['enrollment'], 200
 
 @app.route('/' + USERS + '/<int:user_id>/avatar', methods=['POST'])
@@ -390,8 +396,8 @@ def create_course():
     #jwt belongs to an admin
     query = client.query(kind=USERS)
     if payload:
-        query.add_filter('sub', '=', payload['sub'])
-        query.add_filter('role', '=', 'admin')
+        query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
+        query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
     else:
         return {'Error': 'Unauthorized'}, 401
     
@@ -473,8 +479,8 @@ def update_course(course_id):
     #jwt belongs to an admin
     query = client.query(kind=USERS)
     if payload:
-        query.add_filter('sub', '=', payload['sub'])
-        query.add_filter('role', '=', 'admin')
+        query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
+        query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
     else:
         return {'Error': 'Unauthorized'}, 401
     
@@ -517,8 +523,8 @@ def delete_course(course_id):
     #jwt belongs to an admin
     query = client.query(kind=USERS)
     if payload:
-        query.add_filter('sub', '=', payload['sub'])
-        query.add_filter('role', '=', 'admin')
+        query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
+        query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
     else:
         return {'Error': 'Unauthorized'}, 401
     
