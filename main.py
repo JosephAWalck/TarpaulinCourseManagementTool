@@ -179,18 +179,31 @@ def get_all_users():
         return {'Error': 'You don\'t have permission on this resource'}, 403
     query = client.query(kind=USERS)
     users = list(query.fetch())
+    result = []
     for u in users:
-        u['id'] = u.key.id
-    return users
+        result.append({
+            'id': u.key.id,
+            'role': u['role'],
+            'sub': u['sub']
+        })
+        
+    return result
 
 @app.route('/' + USERS + '/<int:user_id>', methods=['GET'])
 def get_user(user_id):
     payload = verify_jwt(request, False)
     if not payload:
         return {'Error': 'Unauthorized'}, 401
+    jwt_query = client.query(kind=USERS)
+    jwt_query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
+    jwt = list(jwt_query.fetch())
+
     user_key = client.key(USERS, user_id)
     user = client.get(key=user_key)
-    if not user or payload['sub'] != user['sub']:
+    # FIX THIS
+    if not user:
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+    elif payload['sub'] != user['sub'] and jwt[0]['role'] != 'admin':
         return {'Error': 'You don\'t have permission on this resource'}, 403
     user['id'] = user.key.id
 
@@ -296,7 +309,10 @@ def get_enrollment(course_id):
     if not course:
         return {'Error': 'You don\'t have permission on this resource'}, 403
     
-    return course['enrollment'], 200
+    if course.get('enrollment'):
+        return course['enrollment'], 200
+    else:
+        return [], 200
 
 @app.route('/' + USERS + '/<int:user_id>/avatar', methods=['POST'])
 def ceate_avatar(user_id):
@@ -344,7 +360,7 @@ def get_avatar(user_id):
     
     user_key = client.key(USERS, user_id)
     user = client.get(key=user_key)
-    if not user:
+    if user['sub'] != payload['sub']:
         return {'Error': 'You don\'t have permission on this resource'}, 403
     if not user.get('avatar_url'):
         return {'Error': 'Not found'}, 404
