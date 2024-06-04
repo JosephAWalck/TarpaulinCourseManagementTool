@@ -200,11 +200,12 @@ def get_user(user_id):
 
     user_key = client.key(USERS, user_id)
     user = client.get(key=user_key)
-    # FIX THIS
+    
     if not user:
         return {'Error': 'You don\'t have permission on this resource'}, 403
     elif payload['sub'] != user['sub'] and jwt[0]['role'] != 'admin':
         return {'Error': 'You don\'t have permission on this resource'}, 403
+    
     user['id'] = user.key.id
 
     if user['role'] == 'instructor':
@@ -315,7 +316,10 @@ def get_enrollment(course_id):
         return [], 200
 
 @app.route('/' + USERS + '/<int:user_id>/avatar', methods=['POST'])
-def ceate_avatar(user_id):
+def create_avatar(user_id):
+    if 'file' not in request.files:
+        return {'Error': 'The request body is invalid'}, 400
+
     payload = verify_jwt(request, False)
     if not payload:
         return {'Error': 'Unauthorized'}, 401
@@ -324,9 +328,6 @@ def ceate_avatar(user_id):
     user = client.get(key=user_key)
     if payload['sub'] != user['sub']:
         return {'Error': 'You don\'t have permission on this resource'}, 403
-
-    if 'file' not in request.files:
-        return {'Error': 'The request body is invalid'}, 400
 
     file_obj = request.files['file']
 
@@ -349,7 +350,7 @@ def ceate_avatar(user_id):
 
     client.put(user)
 
-    return {'avatar_url': user['avatar_url']}
+    return {'avatar_url': user['avatar_url']}, 200
 
 
 @app.route('/' + USERS + '/<int:user_id>/avatar')
@@ -379,12 +380,14 @@ def get_avatar(user_id):
 
 @app.route('/' + USERS + '/<int:user_id>/avatar', methods=['DELETE'])
 def delete_avatar(user_id):
+
     def delete_image(file_name):
         storage_client = storage.Client()
         bucket = storage_client.get_bucket(PHOTO_BUCKET)
         blob = bucket.blob(file_name)
         blob.delete()
-        return 
+        return
+     
     payload = verify_jwt(request, False)
     if not payload:
         return {'Error': 'Unauthorized'}, 401
@@ -409,7 +412,6 @@ def delete_avatar(user_id):
 @app.route('/' + COURSES, methods=['POST'])
 def create_course():
     payload = verify_jwt(request, False)
-    #jwt belongs to an admin
     query = client.query(kind=USERS)
     if payload:
         query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
@@ -478,7 +480,6 @@ def get_courses():
 
 @app.route('/' + COURSES + '/<int:course_id>')
 def get_course(course_id):
-    
     course_key = client.key(COURSES, course_id)
     course = client.get(key=course_key)
 
@@ -491,6 +492,7 @@ def get_course(course_id):
 
 @app.route('/' + COURSES + '/<int:course_id>', methods=['PATCH'])
 def update_course(course_id):
+    content = request.get_json()
     payload = verify_jwt(request, False)
     #jwt belongs to an admin
     query = client.query(kind=USERS)
@@ -500,23 +502,23 @@ def update_course(course_id):
     else:
         return {'Error': 'Unauthorized'}, 401
     
+    course_key = client.key(COURSES, course_id)
+    course = client.get(key=course_key)
+
+    if not course:
+        return {'Error': 'You don\'t have permission on this resource'}, 403
+    
     admin = list(query.fetch())
     if not admin:
         return {'Error': 'You don\'t have permission on this resource'}, 403
     
-    content = request.get_json()
+    
     if content.get('instructor_id'):
         instructor_key = client.key(USERS, content['instructor_id'])
         instructor = client.get(key=instructor_key)
         
         if not instructor or instructor['role'] != 'instructor':
             return {"Error": "The request body is invalid"}, 400
-    
-    course_key = client.key(COURSES, course_id)
-    course = client.get(key=course_key)
-
-    if not course:
-        return {'Error': 'You don\'t have permission on this resource'}, 403
     
     course.update({
         'instructor_id': content['instructor_id'] if content.get('instructor_id') else course['instructor_id'],
