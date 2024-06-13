@@ -4,6 +4,7 @@ from utils.verify_jwt import verify_jwt
 from google.cloud import datastore, storage
 from google.cloud.datastore import query
 from google.cloud.datastore.query import PropertyFilter
+from models.users_repository import UserRepository
 
 import requests
 import io
@@ -11,68 +12,50 @@ import io
 client = datastore.Client()
 
 def get_all_users():
-    payload = verify_jwt(request, False)
-    query = client.query(kind=USERS)
-    if payload:
-        query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
-        query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
-    else:
-        return {'Error': 'Unauthorized'}, 401
-    
-    admin = list(query.fetch())
-    if not admin:
-        return {'Error': 'You don\'t have permission on this resource'}, 403
-    query = client.query(kind=USERS)
-    users = list(query.fetch())
-    result = []
-    for u in users:
-        result.append({
-            'id': u.key.id,
-            'role': u['role'],
-            'sub': u['sub']
-        })
-        
-    return result
-
-def get_user(user_id):
+    user_instance = UserRepository()
     payload = verify_jwt(request, False)
     if not payload:
         return {'Error': 'Unauthorized'}, 401
-    jwt_query = client.query(kind=USERS)
-    jwt_query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
-    jwt = list(jwt_query.fetch())
-
-    user_key = client.key(USERS, user_id)
-    user = client.get(key=user_key)
+    elif not user_instance.is_admin(payload['sub']):
+        return {'Error': 'You don\'t have permission on this resource'}, 403
     
+    res = user_instance.get_users()
+    return res
+
+def get_user(user_id):
+    user_instance = UserRepository()
+    payload = verify_jwt(request, False)
+    if not payload:
+        return {'Error': 'Unauthorized'}, 401
+    req = user_instance.get_user_by_sub(payload['sub'])
+    user = user_instance.get_user_by_id(user_id)
+    res = user.to_dict()
     if not user:
         return {'Error': 'You don\'t have permission on this resource'}, 403
-    elif payload['sub'] != user['sub'] and jwt[0]['role'] != 'admin':
+    elif payload['sub'] != user.get_sub() and req.get_role() != 'admin':
         return {'Error': 'You don\'t have permission on this resource'}, 403
+
+    if user.get_role() == 'instructor':
+        # Course model and repository
+        query = client.query(kind=COURSES)
+        query.add_filter(filter=PropertyFilter('instructor_id', '=', user.get_id()))
+        courses = list(query.fetch())
+        res['courses'] = []
+        for c in courses:
+            res['courses'].append(f'{request.url_root}{COURSES}/{c.key.id}')
+    elif user.get_role() == 'student':
+        #Course model and repository
+        query = client.query(kind=COURSES)
+        courses = list(query.fetch())
+        res['courses'] = []
+        for c in courses:
+            if c.get('enrollment') and (user.get_id() in c['enrollment']):
+                res['courses'].append(f'{request.url_root}{COURSES}/{c.key.id}')
     
-    user['id'] = user.key.id
-
-    if user['role'] == 'instructor':
-        query = client.query(kind=COURSES)
-        query.add_filter(filter=PropertyFilter('instructor_id', '=', user['id']))
-        courses = list(query.fetch())
-        user['courses'] = []
-        for c in courses:
-            user['courses'].append(f'{request.url_root}{COURSES}/{c.key.id}')
-    elif user['role'] == 'student':
-        query = client.query(kind=COURSES)
-        courses = list(query.fetch())
-        user['courses'] = []
-        for c in courses:
-            if c.get('enrollment') and (user.key.id in c['enrollment']):
-                user['courses'].append(f'{request.url_root}{COURSES}/{c.key.id}')
-
-    if user.get('avatar_file_name'):
-        del user['avatar_file_name']
-
-    return user
+    return res
 
 def create_avatar(user_id):
+    user_instance = UserRepository()
     if 'file' not in request.files:
         return {'Error': 'The request body is invalid'}, 400
 
@@ -80,85 +63,45 @@ def create_avatar(user_id):
     if not payload:
         return {'Error': 'Unauthorized'}, 401
     
-    user_key = client.key(USERS, user_id)
-    user = client.get(key=user_key)
-    if payload['sub'] != user['sub']:
+    user = user_instance.get_user_by_id(user_id)
+    if payload['sub'] != user.get_sub():
         return {'Error': 'You don\'t have permission on this resource'}, 403
 
     file_obj = request.files['file']
+    file_url = f'{request.url_root}{USERS}/{user.get_id()}/avatar'
+    user = user_instance.create_avatar(file_obj, user, file_url)
 
-    storage_client = storage.Client()
-
-    bucket = storage_client.get_bucket(PHOTO_BUCKET)
-
-    file_name = file_obj.filename
-    blob = bucket.blob(file_name)
-    file_obj.seek(0)
-
-    blob.upload_from_file(file_obj)
-
-    user.update({
-        'role': user['role'],
-        'sub': user['sub'],
-        'avatar_url': f'{request.url_root}{USERS}/{user.key.id}/avatar',
-        'avatar_file_name': file_name   
-    })
-
-    client.put(user)
-
-    return {'avatar_url': user['avatar_url']}, 200
+    return {'avatar_url': user.get_avatar_url()}, 200
 
 def get_avatar(user_id):
+    user_instance = UserRepository()
     payload = verify_jwt(request, False)
     if not payload:
         return {'Error': 'Unauthorized'}, 401
     
-    user_key = client.key(USERS, user_id)
-    user = client.get(key=user_key)
-    if user['sub'] != payload['sub']:
+    user = user_instance.get_user_by_id(user_id)
+    if user.get_sub() != payload['sub']:
         return {'Error': 'You don\'t have permission on this resource'}, 403
-    if not user.get('avatar_url'):
+    if not user.get_avatar_url():
         return {'Error': 'Not found'}, 404
-    storage_client = storage.Client()
-
-    bucket = storage_client.get_bucket(PHOTO_BUCKET)
-    blob = bucket.blob(user['avatar_file_name'])
-
-    file_obj = io.BytesIO()
-
-    blob.download_to_file(file_obj)
-
-    file_obj.seek(0)
-
-    return send_file(file_obj, mimetype='image/x-png', download_name=user['avatar_file_name'])
+    
+    file_obj = user_instance.get_avatar(user.get_avatar_file_name())
+    return send_file(file_obj, mimetype='image/x-png', download_name=user.get_avatar_file_name())
 
 def delete_avatar(user_id):
-
-    def delete_image(file_name):
-        storage_client = storage.Client()
-        bucket = storage_client.get_bucket(PHOTO_BUCKET)
-        blob = bucket.blob(file_name)
-        blob.delete()
-        return
-     
+    user_instance = UserRepository() 
     payload = verify_jwt(request, False)
     if not payload:
         return {'Error': 'Unauthorized'}, 401
     
-    user_key = client.key(USERS, user_id)
-    user = client.get(key=user_key)
-    if not user or payload['sub'] != user['sub']:
+    user = user_instance.get_user_by_id(user_id)
+    if not user or payload['sub'] != user.get_id():
         return {'Error': 'You don\'t have permission on this resource'}, 403
 
-    if not user.get('avatar_url'):
+    if not user.get_avatar_url():
         return {'Error': 'Not found'}, 404
     
-    delete_image(user['avatar_file_name'])
-
-    del user['avatar_url']
-    del user['avatar_file_name']
-
-    client.put(user)
+    user_instance.delete_avatar(user)
 
     return '', 204
 
