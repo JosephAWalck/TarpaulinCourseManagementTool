@@ -4,20 +4,21 @@ from utils.verify_jwt import verify_jwt
 from google.cloud import datastore
 from google.cloud.datastore import query
 from google.cloud.datastore.query import PropertyFilter
+from models.courses_repository import CourseRepository
+from models.users_repository import UserRepository
+from models.Course import Course
 
 client = datastore.Client()
 
 def create_course():
+    course_instance = CourseRepository()
+    user_instance = UserRepository()
     payload = verify_jwt(request, False)
-    query = client.query(kind=USERS)
-    if payload:
-        query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
-        query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
-    else:
-        return {'Error': 'Unauthorized'}, 401
+    # is admin
     
-    admin = list(query.fetch())
-    if not admin:
+    if not payload:
+        return {'Error': 'Unauthorized'}, 401
+    elif not user_instance.is_admin(payload['sub']):
         return {'Error': 'You don\'t have permission on this resource'}, 403
 
     content = request.get_json()
@@ -26,31 +27,25 @@ def create_course():
         if not content.get(k):
             return {"Error": "The request body is invalid"}, 400
 
-
-    instructor_key = client.key(USERS, content['instructor_id'])
-    instructor = client.get(key=instructor_key)
+    instructor = user_instance.get_user_by_id(content['instructor_id'])
     
-    if not instructor or instructor['role'] != 'instructor':
+    if not instructor or instructor.get_role() != 'instructor':
         return {"Error": "The request body is invalid"}, 400
     
-    new_key = client.key(COURSES)
-    new_course = datastore.Entity(key=new_key)
-
-    new_course.update({
-        'instructor_id': content['instructor_id'],
-        'number': content['number'],
+    course = {
         'subject': content['subject'],
+        'number': content['number'],
+        'title': content['title'],
         'term': content['term'],
-        'title': content['title']
-    })
-
-    client.put(new_course)
-    new_course['id'] = new_course.key.id
-    new_course['self'] = f'{request.url_root}{COURSES}/{new_course.key.id}'
-
+        'instructor_id': content['instructor_id']
+    }
+    
+    new_course = course_instance.create_course(course)
+    new_course['self'] = f'{request.url_root}{COURSES}/{course['id']}'
     return new_course, 201
 
 def get_courses():
+    course_instance = CourseRepository()
     offset = request.args.get('offset')
     limit = request.args.get('limit')
     if (not offset and not limit):
@@ -60,96 +55,78 @@ def get_courses():
         offset = int(offset)
         limit = int(limit)
 
-    query = client.query(kind=COURSES)
-    query.order = ['subject']
-    query_iter = query.fetch(limit=limit, offset=offset)
-    pages = query_iter.pages
-    results = list(next(pages))
-    for r in results:
-        r['id'] = r.key.id
-        r['self'] = f'{request.url_root}{COURSES}/{r.key.id}'
-
+    courses = course_instance.get_courses(offset, limit)
+    for c in courses:
+        c['self'] = f'{request.url_root}{COURSES}/{c.key.id}'
     return {
-        'courses': results,
+        'courses': courses,
         'next': f'{request.url_root}{COURSES}?limit={limit}&offset={offset+3}'
     }
 
 def get_course(course_id):
-    course_key = client.key(COURSES, course_id)
-    course = client.get(key=course_key)
-
+    # course_key = client.key(COURSES, course_id)
+    # course = client.get(key=course_key)
+    course_instance = CourseRepository()
+    course = course_instance.get_course(course_id)
     if not course:
         return {'Error': 'Not found'}, 404
 
-    course['id'] = course.key.id
-    course['self'] = f'{request.url_root}{COURSES}/{course.key.id}'
-    return course
+    course_dict = course.to_dict()
+    course_dict['self'] = f'{request.url_root}{COURSES}/{course.get_id()}'
+    return course_dict
 
 def update_course(course_id):
+    user_instance = UserRepository()
+    course_instance = CourseRepository()
     content = request.get_json()
     payload = verify_jwt(request, False)
-    #jwt belongs to an admin
-    query = client.query(kind=USERS)
-    if payload:
-        query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
-        query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
-    else:
+    if not payload:
         return {'Error': 'Unauthorized'}, 401
-    
-    course_key = client.key(COURSES, course_id)
-    course = client.get(key=course_key)
+
+    course = course_instance.get_course(course_id)
 
     if not course:
         return {'Error': 'You don\'t have permission on this resource'}, 403
     
-    admin = list(query.fetch())
-    if not admin:
+    if not user_instance.is_admin(payload['sub']):
         return {'Error': 'You don\'t have permission on this resource'}, 403
-    
     
     if content.get('instructor_id'):
-        instructor_key = client.key(USERS, content['instructor_id'])
-        instructor = client.get(key=instructor_key)
-        
-        if not instructor or instructor['role'] != 'instructor':
+        instructor = user_instance.is_instructor(content['instructor_id'])
+        if not instructor:
             return {"Error": "The request body is invalid"}, 400
     
-    course.update({
-        'instructor_id': content['instructor_id'] if content.get('instructor_id') else course['instructor_id'],
-        'subject': content['subject'] if content.get('subject') else course['subject'],
-        'number': content['number'] if content.get('number') else course['number'],
-        'title': content['title'] if content.get('title') else course['title'],
-        'term': content['term'] if content.get('term') else course['term'],
-    })
+    updated_course = course_instance.update_course(course_id, content)
+    res = updated_course.to_dict()
+    res['self'] = f'{request.url_root}{COURSES}/{updated_course.get_id()}'
 
-    client.put(course)
-
-    course['id'] = course.key.id
-    course['self'] = f'{request.url_root}{COURSES}/{course.key.id}'
-
-    return course, 200
+    return res, 200
 
 def delete_course(course_id):
+    user_instance = UserRepository()
+    course_instance = CourseRepository()
     payload = verify_jwt(request, False)
     #jwt belongs to an admin
-    query = client.query(kind=USERS)
-    if payload:
-        query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
-        query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
-    else:
+    # query = client.query(kind=USERS)
+    # if payload:
+    #     query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
+    #     query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
+    # else:
+    #     return {'Error': 'Unauthorized'}, 401
+    if not payload:
         return {'Error': 'Unauthorized'}, 401
-    
-    admin = list(query.fetch())
-    if not admin:
+    elif not user_instance.is_admin(payload['sub']):
         return {'Error': 'You don\'t have permission on this resource'}, 403
     
-    course_key = client.key(COURSES, course_id)
-    course = client.get(key=course_key)
-
-    if not course:
-        return {'Error': 'You don\'t have permission on this resource'}, 403
+    # admin = list(query.fetch())
+    # if not admin:
+    #     return {'Error': 'You don\'t have permission on this resource'}, 403
     
-    client.delete(course_key)
+    # course_key = client.key(COURSES, course_id)
+    # course = client.get(key=course_key)
+    res = course_instance.delete_course(course_id)
+    if not res:
+        return {'Error': 'You don\'t have permission on this resource'}, 403
     return '', 204
 
 def update_enrollment(course_id):

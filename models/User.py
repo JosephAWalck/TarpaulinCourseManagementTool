@@ -8,10 +8,6 @@ class User:
 
     def get_id(self):
         return self._id
-    
-    def set_id(self, id):
-        self._id = id
-        return
 
     def get_avatar_url(self):
         return self._avatar_url

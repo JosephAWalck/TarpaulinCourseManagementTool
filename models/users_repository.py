@@ -17,6 +17,14 @@ class UserRepository:
         if not res:
             return False
         return True
+    
+    def is_instructor(self, instructor_id):
+        instructor_key = self._client.key(USERS, instructor_id)
+        instructor = self._client.get(key=instructor_key)
+
+        if not instructor or instructor['role'] != 'instructor':
+            return None
+        return instructor
  
     def get_users(self):
         query = self._client.query(kind=USERS)
@@ -68,16 +76,11 @@ class UserRepository:
             'avatar_url': file_url,
             'avatar_file_name': file_name
         })
-        # user.set_avatar_url(file_url)
-        # user.set_avatar_filename(file_name)
         
         self._client.put(user)
-        return User(
-            user.key.id, 
-            user['role'], 
-            user['sub'], 
-            user['avatar_url'], 
-            user['avatar_file_name'])
+        user_obj.set_avatar_url(file_url)
+        user_obj.set_avatar_file_name(file_name)
+        return
     
     def get_avatar(self, avatar_file_name):
         bucket = self._storage_client.get_bucket(PHOTO_BUCKET)

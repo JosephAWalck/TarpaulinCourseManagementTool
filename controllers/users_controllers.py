@@ -69,7 +69,7 @@ def create_avatar(user_id):
 
     file_obj = request.files['file']
     file_url = f'{request.url_root}{USERS}/{user.get_id()}/avatar'
-    user = user_instance.create_avatar(file_obj, user, file_url)
+    user_instance.create_avatar(file_obj, user, file_url)
 
     return {'avatar_url': user.get_avatar_url()}, 200
 
