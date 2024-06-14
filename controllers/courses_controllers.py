@@ -106,24 +106,12 @@ def delete_course(course_id):
     user_instance = UserRepository()
     course_instance = CourseRepository()
     payload = verify_jwt(request, False)
-    #jwt belongs to an admin
-    # query = client.query(kind=USERS)
-    # if payload:
-    #     query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
-    #     query.add_filter(filter=PropertyFilter('role', '=', 'admin'))
-    # else:
-    #     return {'Error': 'Unauthorized'}, 401
+
     if not payload:
         return {'Error': 'Unauthorized'}, 401
     elif not user_instance.is_admin(payload['sub']):
         return {'Error': 'You don\'t have permission on this resource'}, 403
     
-    # admin = list(query.fetch())
-    # if not admin:
-    #     return {'Error': 'You don\'t have permission on this resource'}, 403
-    
-    # course_key = client.key(COURSES, course_id)
-    # course = client.get(key=course_key)
     res = course_instance.delete_course(course_id)
     if not res:
         return {'Error': 'You don\'t have permission on this resource'}, 403
