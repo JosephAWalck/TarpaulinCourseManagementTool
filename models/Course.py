@@ -5,13 +5,15 @@ class Course:
                  number=None, 
                  title=None, 
                  term=None, 
-                 instructor_id=None):
+                 instructor_id=None,
+                 enrollment=None):
         self._id = id
         self._subject = subject
         self._number = number
         self._title = title
         self._term = term
         self._instructor_id = instructor_id
+        self._enrollment = enrollment
 
     def get_id(self):
         return self._id
@@ -53,6 +55,13 @@ class Course:
     def set_instructor_id(self, instructor_id):
         self._instructor_id = instructor_id
         return
+    
+    def get_enrollment(self):
+        return self._enrollment
+
+    def set_enrollment(self, enrollment):
+        self._enrollment = enrollment
+        return  
     
     def to_dict(self):
         return {

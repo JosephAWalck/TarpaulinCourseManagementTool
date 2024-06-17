@@ -1,4 +1,5 @@
 from google.cloud import datastore, storage
+from google.cloud.datastore import query
 from google.cloud.datastore.query import PropertyFilter
 from config import USERS, PHOTO_BUCKET
 from models.User import User
@@ -108,3 +109,31 @@ class UserRepository:
         self._client.put(user)
 
         return
+
+    def get_admin_instructor(self, sub):
+        user_query = self._client.query(kind=USERS)
+        user_query.add_filter(filter=PropertyFilter('sub', '=', sub))
+        user_filter = query.Or([
+            query.PropertyFilter('role', '=', 'admin'),
+            query.PropertyFilter('role', '=', 'instructor')
+        ])
+        user_query.add_filter(filter=user_filter)
+        user_list = list(user_query.fetch())
+        if user_list:
+            user = user_list[0]
+            return User(user.key.id, 
+                user['role'], 
+                user['sub'], 
+                user.get('avatar_url'), 
+                user.get('avatar_file_name'))
+        return None
+    
+    def get_user_list(self, users):
+        res = []
+        for u in users:
+            user_key = self._client.key(USERS, u)
+            user = self._client.get(key=user_key)
+            if not user:
+                return None
+            res.append(user.key.id) 
+        return res

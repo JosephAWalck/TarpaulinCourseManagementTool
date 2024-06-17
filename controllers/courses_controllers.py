@@ -2,11 +2,8 @@ from flask import request
 from config import USERS, COURSES
 from utils.verify_jwt import verify_jwt
 from google.cloud import datastore
-from google.cloud.datastore import query
-from google.cloud.datastore.query import PropertyFilter
 from models.courses_repository import CourseRepository
 from models.users_repository import UserRepository
-from models.Course import Course
 
 client = datastore.Client()
 
@@ -14,8 +11,7 @@ def create_course():
     course_instance = CourseRepository()
     user_instance = UserRepository()
     payload = verify_jwt(request, False)
-    # is admin
-    
+
     if not payload:
         return {'Error': 'Unauthorized'}, 401
     elif not user_instance.is_admin(payload['sub']):
@@ -64,8 +60,6 @@ def get_courses():
     }
 
 def get_course(course_id):
-    # course_key = client.key(COURSES, course_id)
-    # course = client.get(key=course_key)
     course_instance = CourseRepository()
     course = course_instance.get_course(course_id)
     if not course:
@@ -118,86 +112,48 @@ def delete_course(course_id):
     return '', 204
 
 def update_enrollment(course_id):
+    user_instance = UserRepository()
+    course_instance = CourseRepository()
     content = request.get_json()
     payload = verify_jwt(request, False)
-    user_query = client.query(kind=USERS)
-    if payload:
-        user_query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
-        user_filter = query.Or([
-            query.PropertyFilter('role', '=', 'admin'),
-            query.PropertyFilter('role', '=', 'instructor')
-        ])
-        user_query.add_filter(filter=user_filter)
-    else:
+    if not payload:
         return {'Error': 'Unauthorized'}, 401
-    
-    user = list(user_query.fetch())
-    course_key = client.key(COURSES, course_id)
-    course = client.get(key=course_key)
+    user = user_instance.get_admin_instructor(payload['sub'])
+    course = course_instance.get_course(course_id)
 
-    if not user or (user[0].get('role') == 'instructor' and user[0].key.id != course['instructor_id']):
-        return {'Error': 'You don\'t have permission on this resource'}, 403
-
-    if not course:
+    if not user or not course or (user.get_role() == 'instructor' and user.get_id() != course.get_instructor_id()):
         return {'Error': 'You don\'t have permission on this resource'}, 403
     
-    if not course.get('enrollment'):
-        course['enrollment'] = []
+    if course.get_enrollment():
+        enrollment = course.get_enrollment()
+    else:
+        enrollment = []
+
+    add_students = user_instance.get_user_list(content['add'])
+    remove_students = user_instance.get_user_list(content['remove'])
+
+    if add_students is None or remove_students is None:
+        return {'Error': 'Enrollment data is invalid'}, 409
     
-    for s in content['add']:
-        if s in content['remove']:
-            return {'Error': 'Enrollment data is invalid'}, 409
-        #### optimize this ####
-        student_key = client.key(USERS, s)
-        student = client.get(key=student_key)
-        if not student:
-            return {'Error': 'Enrollment data is invalid'}, 409
-        if s in course['enrollment']:
-            continue
-        course['enrollment'].append(s)
-
-    for s in content['remove']:
-        #### optimize this ####
-        student_key = client.key(USERS, s)
-        student = client.get(key=student_key)
-        if not student:
-            return {'Error': 'Enrollment data is invalid'}, 409
-        if s not in course['enrollment']:
-            continue
-        course['enrollment'].remove(s)
-
-    course.update({
-        'enrollment': course['enrollment']
-    })
-
-    client.put(course)
+    result = course_instance.update_enrollment(course.get_id(), add_students, remove_students, enrollment)
+    if not result:
+        return {'Error': 'Enrollment data is invalid'}, 409
 
     return '', 200
 
 def get_enrollment(course_id):
+    user_instance = UserRepository()
+    course_instance = CourseRepository()
     payload = verify_jwt(request, False)
-    user_query = client.query(kind=USERS)
-    if payload:
-        user_query.add_filter(filter=PropertyFilter('sub', '=', payload['sub']))
-        user_filter = query.Or([
-            query.PropertyFilter('role', '=', 'admin'),
-            query.PropertyFilter('role', '=', 'instructor')
-        ])
-        user_query.add_filter(filter=user_filter)
-    else:
+    if not payload:
         return {'Error': 'Unauthorized'}, 401
-    
-    user = list(user_query.fetch())
-    course_key = client.key(COURSES, course_id)
-    course = client.get(key=course_key)
+    user = user_instance.get_admin_instructor(payload['sub'])
 
-    if not user or (user[0].get('role') == 'instructor' and user[0].key.id != course['instructor_id']):
+    course = course_instance.get_course(course_id)
+    if not user or not course or (user.get_role() == 'instructor' and user.get_id() != course.get_instructor_id()):
         return {'Error': 'You don\'t have permission on this resource'}, 403
 
-    if not course:
-        return {'Error': 'You don\'t have permission on this resource'}, 403
+    if course.get_enrollment():
+        return course.get_enrollment(), 200
+    return [], 200
     
-    if course.get('enrollment'):
-        return course['enrollment'], 200
-    else:
-        return [], 200
